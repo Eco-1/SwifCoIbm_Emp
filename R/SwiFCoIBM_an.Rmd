@@ -1,0 +1,727 @@
+---
+title: "SwiFCoIBM_Emp_analysis"
+author: ""
+date: '2023-01-07'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r sources}
+source("./src/source_summary.r") 
+source("./src/source_analysis.r")
+
+acKM2 <- read.csv("./src/km2Table.csv") #table that links area codes to square kilometers
+
+```
+
+```{r output string prep}
+
+tst1 <- read.csv("./modeloutputfile.csv", skip = 6, header = TRUE) # due to size restrictions the model output can not be included here
+
+tst2 <- tst1 %>% 
+  mutate(acStringClean = gsub("[","", areaCodesWithInfection, fixed = TRUE)) %>%
+  mutate(acStringClean = gsub("]","", acStringClean, fixed = TRUE)) %>%
+  mutate(infectedAreaInSqkm = 0, quarter = 0) 
+
+tst2 <- tst2 %>% mutate(paramCombi = paste0(
+    roaming, "_mue_",
+    mue, "_bm_",
+    b_move, "_bW_",
+    b_within, "_bb_",
+    b_between, "_vsa_",
+    VaccinationPercentageSubadult, "_va_",
+    VaccinationPercentageAdult
+ ))
+
+
+```
+
+```{r string separator}
+
+### Warning: can take several days (depending on the inpus size) on normal computers, use HPC if possible
+tstWithArea <- data.frame()  
+
+  library(parallel)
+  library(foreach)
+  library(doParallel)
+
+
+cores=detectCores()
+cl <- makeCluster(cores[1]-2) #not to overload your computer
+registerDoParallel(cl)
+
+tstWithArea<- foreach::foreach(i = 1:nrow(tst2),.combine =  "rbind") %dopar% {
+
+  library(dplyr)
+ 
+  a <- tst2[i, ]
+  b <- base::strsplit(a$acStringClean, " ") %>%
+    base::as.data.frame() %>%
+    dplyr::rename(areaCode = 1) %>%
+    dplyr::mutate(areaCode = base::as.numeric(areaCode)) %>%
+    dplyr::left_join(acKM2, by = "areaCode")
+  
+  tst2[i,]$infectedAreaInSqkm <- base::sum(b$km2)
+
+  
+}
+
+stopCluster(cl)
+
+tst2_combine <- cbind(tst2,tstWithArea)
+
+saveRDS(tst2_combine, paste0("./speedOfSpreadCombination.rds")) #save intermediary output to prevent running the string separator again
+```
+
+```{r summary}
+
+tst2_combine_l <-  readRDS("./speedOfSpreadCombination.rds") #tst2_combine
+
+tstT <-
+  tst2_combine_l %>% 
+  ungroup() %>% 
+  group_by(runID) %>% 
+  mutate(quarterHelper = case_when(X.step. %% 13 != 0 ~ 0, TRUE ~ 1)) %>%
+  mutate(quarter = cumsum(quarterHelper))
+
+
+tst3 <- tstT %>% dplyr::rename(
+  Npop = count.turtles,
+  runNumber = X.run.number. ,
+  t = X.step. ,
+  Nsusceptible = ct_Sus,
+  Ninfected = ct_Let,
+  Nimmune = ct_Imm
+)
+
+tst4 <-
+  tst3 %>% dplyr::group_by(
+    quarter,
+    roaming,
+    mue,
+    bfct,
+    b_move,
+    b_within,
+    b_between,
+    VaccinationPercentageSubadult,
+    VaccinationPercentageAdult,
+    paramCombi
+  ) %>%
+  summarise(meanarea = mean(tstWithArea, na.rm = TRUE), sdarea = sd(tstWithArea, na.rm = TRUE)) %>%
+  filter(meanarea > 0)
+
+tstq <-
+  tst4 %>% 
+  ungroup() %>% 
+  dplyr::group_by(paramCombi) %>% 
+  filter(meanarea > 314) %>%
+  dplyr::summarise(min_q = min(quarter)) %>%
+  dplyr::ungroup()
+
+temp2 <- tst4 %>% dplyr::left_join(tstq, by = c("paramCombi")) %>% 
+  dplyr::mutate(quarterAdj = ((quarter ) - min_q) + 1)
+
+mun_quarters_dec <- readr::read_rds("./src/municipalities_quarters_dec.Rds") #outbreak data
+
+realData <- mun_quarters_dec %>%
+  dplyr::filter(I_total > 0) %>%
+  dplyr::group_by(municipality) %>%
+  dplyr::mutate(first = min(time_cont)) %>%
+  dplyr::filter(time_cont == first) %>%
+  dplyr::group_by(time_cont) %>%
+  dplyr::summarize(area_q = sum(area)) %>%
+  dplyr::mutate(area_t = cumsum(area_q))
+
+
+```
+
+```{r speed of spread}
+
+temp3 <- temp2
+
+temp4 <-
+  temp3 %>%  
+  mutate(roaming = case_when(grepl("-CRW", roaming) ~ "HCRW", TRUE ~ roaming)) %>%
+  mutate(
+    cName = case_when(
+      grepl("DD", roaming) ~ "Competition driven movement",
+      grepl("HD", roaming)   ~ "Habitat driven movement",
+      grepl("HCRW", roaming)  ~ "Habitat driven CRW",
+      grepl("OFF", roaming) ~  "Implicit movement"
+    )
+  )
+
+temp5 <- temp4
+
+temp5$b_between <-
+  factor(
+    temp5$b_between,
+    levels = c(0.0044, 0.0065),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", beta, "b")), expression(paste("High ", beta, "b")))
+  )
+
+temp5$b_within<-
+  factor(
+    temp5$b_within,
+    levels = c(0.044, 0.065),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", beta, "w")), expression(paste("High ", beta, "w")))
+  )
+
+temp5$mue<-
+  factor(
+    temp5$mue,
+    levels = c(6, 8,9),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", mu, "")), expression(paste("", mu, " +2 weeks")), expression(paste("", mu, " +3 weeks")))
+  )
+
+(
+  sosFin <- ggplot(temp5) +
+    geom_line(aes(quarterAdj, meanarea, color = as.factor(cName)), size = 1) +
+    geom_line(
+      data = realData,
+      aes(time_cont, area_t, lty = 'MVP outbreak*'),
+      color = "deeppink4",
+      size = 1.5
+    ) +
+    geom_ribbon(
+      aes(
+        y = (meanarea),
+        ymin = meanarea - sdarea ,
+        ymax = meanarea + sdarea ,
+        x = quarterAdj,
+        fill = as.factor(cName)
+      ),
+      alpha = .2
+    ) +
+    facet_grid(b_within + b_between ~ mue,
+               labeller = label_parsed) +
+    theme_bw() +
+    labs(
+      x = "Quarter",
+      y =  expression(paste(
+        "Cumulative area with infected individuals in ", "km" ^ "2"
+      )),
+      color = "Movement",
+      fill = "Movement"
+    ) +
+    guides(colour = guide_legend(byrow = TRUE)) +
+    theme(
+      axis.text = element_text(size = 26),
+      axis.title = element_text(size = 28),
+      legend.text = element_text(size = 26),
+      legend.title = element_text(size = 28),
+      strip.text.x = element_text(size = 28),
+      strip.text.y = element_text(size = 28),
+      legend.spacing.y = unit(.25, 'cm'),
+      panel.spacing = unit(.50, 'cm')
+    ) +
+    scale_y_continuous(expand = c(0, 0)) +
+    scale_x_continuous(
+      expand = c(0, 0),
+      breaks = c(1, 5, 10, 15, 20, 25, 28),
+      limits = c(0, 28)
+    ) +
+    scale_color_manual(values = rcartocolor::carto_pal(8, "Bold")) +
+    scale_fill_manual(values = rcartocolor::carto_pal(8,  "Bold")) +
+    scale_linetype_manual(name = "", values = 4)#+
+)
+
+
+
+sos_Out_name <-
+  paste("./", "sos1.png",
+        sep = "")
+
+ggsave(
+  sos_Out_name,
+  plot = sosFin,
+  dpi = 300,
+  limitsize = TRUE,
+  width = 30,
+  height = 20
+)
+
+
+
+```
+
+```{r selecting and renaming data}
+
+raw1 <- tst1
+
+rawCompleteIdent <- raw1 %>%
+  dplyr::mutate(uniqueIdent = paste(mue,
+                                    b_move,
+                                    roaming,
+                                    b_within,
+                                    b_between,
+                                    sep = "_"))
+
+rawCompleteIdent2 <- rawCompleteIdent  %>% dplyr::rename(
+  Npop = count.turtles,
+  runNumber = X.run.number. ,
+  t = X.step. ,
+  seedN = runID,
+  Nsusceptible = ct_Sus,
+  Ninfected = ct_Let,
+  Nimmune = ct_Imm
+)
+
+rawCompleteIdentSelect <-
+  rawCompleteIdent2  %>% dplyr::select(
+    runNumber,
+    t,
+    Npop,
+    Nsusceptible,
+    Nimmune,
+    Ninfected,
+    b_within,
+    b_move,
+    roaming,
+    b_between,
+    seedN,
+    mue,
+    infPiglett,
+    infSubAdult,
+    infAdult,
+    immAdult,
+    immSubAdult,
+    immPiglett,
+    sampleSetup,
+    uniqueIdent,
+    infAdult_samp,
+    infSubAdult_samp,
+    infPiglett_samp,
+    immAdult_samp,
+    immSubAdult_samp,
+    immPiglett_samp,
+    dba_Indiv,
+    dba_IndivImmune,
+    dbr_Adult,
+    dbr_SubAdult,
+    dbr_piglet,
+    dbr_AdultImmune,
+    dbr_SubAdultImmune,
+    dbr_pigletImmune
+  )
+
+
+```
+
+```{r summary}
+
+summ <- rawCompleteIdentSelect %>%
+  dplyr::group_by(t, uniqueIdent,  b_within,
+                  b_move, mue, b_between) %>% dplyr::summarise_at(
+                    .vars = c(
+                      "Nsusceptible",
+                      "Ninfected",
+                      "Npop",
+                      "Nimmune",
+                      "infPiglett",
+                      "infSubAdult",
+                      "infAdult",
+                      "immAdult",
+                      "immSubAdult",
+                      "immPiglett",
+                      "infAdult_samp",
+                      "infSubAdult_samp",
+                      "infPiglett_samp",
+                      "immAdult_samp",
+                      "immSubAdult_samp",
+                      "immPiglett_samp",
+                      "dba_Indiv",
+                      "dba_IndivImmune",
+                      "dbr_Adult",
+                      "dbr_SubAdult",
+                      "dbr_piglet",
+                      "dbr_AdultImmune",
+                      "dbr_SubAdultImmune",
+                      "dbr_pigletImmune"
+                    ),
+                    .funs = c(mean = "mean", sd = "sd")
+                  )
+
+```
+
+```{r data - infected per ageclass}
+
+ac1Raw <- summ %>%
+  dplyr::select(t,
+                uniqueIdent,
+                infAdult_samp_mean,
+                infSubAdult_samp_mean,
+                infPiglett_samp_mean)  %>%
+  dplyr::mutate(
+    allInf = (
+      infAdult_samp_mean + infSubAdult_samp_mean + infPiglett_samp_mean
+    ),
+    percAd = (infAdult_samp_mean  / allInf),
+    percSa = (infSubAdult_samp_mean  / allInf),
+    percPi = (infPiglett_samp_mean / allInf)
+  )
+
+ac1Raw$percAd[is.nan(ac1Raw$percAd)] <- 0
+ac1Raw$percSa[is.nan(ac1Raw$percSa)] <- 0
+ac1Raw$percPi[is.nan(ac1Raw$percPi)] <- 0
+
+l1 <- length(unique(ac1Raw$uniqueIdent))
+ac1Raw$quarter <- 0
+qq <- 0
+ct <- -1
+
+for (ww in 1:length(ac1Raw$t))
+{
+  if (ac1Raw$t[ww] %% 13 == 0)
+  {
+    ct <- ct + 1
+    if (ct == l1)
+    {
+      qq <- qq + 1
+      ct <- -1
+    }
+  }
+  ac1Raw$quarter[ww] <- qq
+}
+
+```
+
+```{r age class infected summed}
+nv1 <- unique(ac1Raw$uniqueIdent)
+tdf <- data.frame()
+
+for (i in 1:length(nv1))
+{
+  ident1 <- nv1[[i]]
+  
+  name1 <- ident1 %>% data.frame()
+  
+  name1 <- name1 %>%
+    dplyr::mutate(clearName = dplyr::case_when(
+      grepl("_HD_", ., fixed = TRUE) == FALSE ~ "0",
+      TRUE ~ "Habitat driven movement "
+    )) %>%
+    dplyr::mutate(
+      clearName = dplyr::case_when(
+        grepl("_HD-CRW_", .) == FALSE ~ clearName,
+        TRUE ~ "Habitat driven correlated random walk "
+      )
+    ) %>%
+    dplyr::mutate(clearName = dplyr::case_when(
+      grepl("_DD_", .) == FALSE ~ clearName,
+      TRUE ~ "Density driven movement "
+    )) %>%
+    dplyr::mutate(clearName = dplyr::case_when(grepl("_OFF_", .) == FALSE ~ clearName, TRUE ~ "Implicit movment ")) %>%
+    dplyr::mutate(clearName =  dplyr::case_when(
+      grepl("_full_", .) == FALSE ~ clearName,
+      TRUE ~ paste0(clearName, "- all individuals recorded")
+    )) %>%
+    dplyr::mutate(clearName =  dplyr::case_when(
+      grepl("_real_", .) == FALSE ~ clearName,
+      TRUE ~ paste0(clearName, "- realistic sampling (Scherer et al. 2019)")
+    ))
+  
+  ac2 <- ac1Raw %>%
+    dplyr::filter(uniqueIdent == ident1) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(percAd, percSa, percPi, quarter, b_within,
+    b_move,mue,b_between ) %>%
+    dplyr::group_by(quarter, b_within,
+    b_move,mue,b_between ) %>%
+    dplyr::summarise_at(.vars = c('percAd', 'percSa', 'percPi'), "mean") %>%
+    dplyr::rename(Adults = percAd,
+                  Subadults = percSa,
+                  Piglets = percPi) %>%
+    mutate(RName = name1$clearName) %>% 
+    tidyr::pivot_longer(cols = c(Adults, Subadults, Piglets),
+                        names_to = "age_class")
+  
+  ac2$age_class <- forcats::fct_relevel(ac2$age_class,
+                              "Adults",
+                              "Subadults",
+                              "Piglets")
+  
+  ac3 <- ac2 %>% dplyr::filter( quarter > 6) %>% dplyr::mutate(quarter = quarter - 6)
+
+  tdf <- rbind(tdf, ac3)
+  
+}
+
+tdf2 <-
+  tdf  %>%  mutate(
+    cName = case_when(
+      grepl("Density", RName) ~ "Competition driven movement",
+      grepl("Habitat driven movement ", RName)   ~ "Habitat driven movement",
+      grepl("correlated", RName)  ~ "Habitat driven CRW",
+      grepl("Implicit", RName) ~  "Implicit movement"
+    )
+  )
+
+rdprp1 <-
+  mun_quarters_dec %>%
+  group_by(time_cont) %>%
+  summarise_at(
+    .vars = c("I_piglet",
+              "I_subadult",
+              "I_adult",
+              "I_total",
+              "I_age_NA"),
+    .funs = 'sum'
+  ) %>%
+  ungroup() %>%
+  mutate(I_total = I_total - I_age_NA) %>%
+  dplyr::select(-I_age_NA) %>%
+  mutate(
+    Adults = round((I_adult / I_total) * 100),
+    Subadults = round((I_subadult / I_total) * 100),
+    Piglets = round((I_piglet / I_total) * 100)
+  ) %>%
+  pivot_longer(cols = c(Adults, Subadults, Piglets),
+               names_to = "age_class") %>%
+  mutate(value = value / 100) %>%
+  mutate(value = case_when( is.nan(value)~0, TRUE ~value)) %>%
+   dplyr::select( -I_piglet, -I_subadult, -I_adult, -I_total)
+  
+  tdf2 <- tdf2 %>%  dplyr::select(!RName)
+  
+  tdf2a <- tdf2 %>% mutate(id= paste0(b_within,"_", b_move,"_",   mue,"_", b_between ) ) 
+  
+  tdf2aSp <- split(tdf2a, tdf2a$id)
+  
+  
+rdata <-rdprp1
+
+rdata$cName <- "MVP outbreak*"
+
+rdata <- rdata %>% rename(quarter = time_cont) 
+
+tdf3Split <- NULL
+for (i in 1:length(tdf2aSp)) {
+  
+temp1 <- tdf2aSp[[i]] %>% ungroup() %>% dplyr::select(quarter, age_class, value, cName )
+
+tdf3Split[[i]] <- rbind(temp1, rdata)
+tdf3Split[[i]] <-
+  tdf3Split[[i]] %>% mutate(
+    b_within = unique(tdf2aSp[[i]]$b_within),
+    b_move = unique(tdf2aSp[[i]]$b_move),
+    mue = unique(tdf2aSp[[i]]$mue),
+    b_between = unique(tdf2aSp[[i]]$b_between),
+    id = unique(tdf2aSp[[i]]$id
+    )
+  )
+  
+}
+
+tdf3 <- NULL
+
+tdf3 <- do.call(rbind, tdf3Split)
+
+tdf3$age_class <- gsub("s", "", tdf3$age_class)
+tdf3$age_class <- gsub("SubAdult", "Subadult", tdf3$age_class)
+
+
+tdf4 <-  tdf3 %>% ungroup() %>%
+  group_by(age_class, cName, b_within,
+           b_move, mue, b_between) %>%
+  summarise(mvalue = mean(value), sdvalue = sd(value)) %>%
+  mutate(age_class = as.factor(age_class)) %>%
+  mutate(age_class2 = fct_relevel(age_class, "Adult", "Subadult", "Piglet"))
+
+
+tdf5 <- tdf4
+
+tdf5$b_between <-
+  factor(
+    tdf5$b_between,
+    levels = c(0.0044, 0.0065),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", beta, "b")), expression(paste("High ", beta, "b")))
+  )
+
+tdf5$b_within <-
+  factor(
+    tdf5$b_within,
+    levels = c(0.044, 0.065),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", beta, "w")), expression(paste("High ", beta, "w")))
+  )
+
+tdf5$mue <-
+  factor(
+    tdf5$mue,
+    levels = c(6, 8, 9),
+    ordered = TRUE,
+    labels = c(expression(paste("Average ", mu, "")), expression(paste("", mu, " +2 weeks")), expression(paste("", mu, " +3 weeks")))
+  )
+
+
+(
+  acpi1 <- ggplot(tdf5) +
+    geom_point(
+      aes(mvalue, cName, color = age_class2),
+      position = position_dodge(.4),
+      size = 4
+    ) +
+    geom_errorbar(
+      aes(
+        xmin = mvalue - sdvalue,
+        xmax = mvalue + sdvalue,
+        y = cName,
+        x = mvalue,
+        color = age_class2
+      ),
+      position = position_dodge(.4),
+      width = .2,
+      size = 1
+    ) +
+    labs(x = "", y = "Realtive number of sampled\n infected individuals") +
+    scale_x_continuous(
+      breaks = seq(0, 1, 0.1),
+      limits = c(0, 1),
+      expand = c(0, 0),
+      oob = scales::oob_squish
+    ) +
+    coord_cartesian(clip = "off") +
+    theme_bw() +
+    scale_color_manual(values = c("#CD5555", "black", "#1874CD")) +
+    theme(
+      axis.text.y = element_text(size =  24),
+      axis.text.x = element_text(size =  20),
+      axis.title = element_text(size =   28),
+      legend.text = element_text(size =  26),
+      legend.title = element_text(size = 28),
+      strip.text.x = element_text(size = 28),
+      strip.text.y = element_text(size = 28),
+      plot.title = element_text(size = 28),
+      plot.margin = margin(1, 1, 1, 1, "cm"),
+      panel.spacing = unit(2, "lines")
+    ) +
+    facet_grid(b_within + b_between ~ mue ,
+               labeller = label_parsed
+    )
+  ) 
+   
+
+  acI_Out_name <-
+    paste("./",
+          "ageClass.png",
+          sep = "")
+  
+  ggsave(
+    acI_Out_name,
+    plot = acpi1,
+    dpi = 300,
+    limitsize = TRUE,
+    width = 30,
+    height = 20
+  )
+
+
+```
+
+```{r SIR table}
+
+SIR_t <- summ %>%
+  dplyr::select(
+    t,
+    b_move,
+    b_between,
+    b_within,
+    mue,
+    uniqueIdent,
+    immAdult_samp_mean,
+    immSubAdult_samp_mean,
+    immPiglett_samp_mean,
+    infAdult_samp_mean,
+    infSubAdult_samp_mean,
+    infPiglett_samp_mean,
+    dba_Indiv_mean,
+    dbr_Adult_mean,
+    dbr_SubAdult_mean,
+    dbr_piglet_mean
+  )  %>%
+  dplyr::mutate(
+    allImm = (immAdult_samp_mean + immSubAdult_samp_mean + immPiglett_samp_mean),
+    allInf = (infAdult_samp_mean + infSubAdult_samp_mean + infPiglett_samp_mean),
+    allRng = (dbr_Adult_mean + dbr_SubAdult_mean + dbr_piglet_mean),
+    allAge = (dba_Indiv_mean),
+    totalSamp = (allImm + allInf + allRng + allAge),
+    S = ((allRng + allAge) / totalSamp),
+    I = (allInf / totalSamp),
+    R = (allImm / totalSamp)
+  ) %>% 
+  dplyr::mutate_at(vars(S,I,R), ~replace(., is.nan(.), 0)) %>% 
+  dplyr::mutate(SIR = paste(round(S, digits = 3),round(I, digits = 3),round(R, digits = 3), sep = " / "))
+
+l1 <- length(unique(SIR_t$uniqueIdent))
+SIR_t$quarter <- 0
+qq <- 0
+ct <- -1
+
+for (ww in 1:length(SIR_t$t))
+{
+  if (SIR_t$t[ww] %% 13 == 0)
+  {
+    ct <- ct + 1
+    if (ct == l1)
+    {
+      qq <- qq + 1
+      ct <- -1
+    }
+  }
+  SIR_t$quarter[ww] <- qq
+}
+
+sirTab <- SIR_t %>%
+  dplyr::filter(quarter == 15) %>%
+  dplyr::group_by(uniqueIdent, quarter, b_move,b_within,b_between, mue) %>%
+  dplyr::summarise_at(.vars = c("S", "I", "R"), .funs = mean) %>%
+  dplyr::mutate(MovementType = dplyr::case_when(grepl("_HD_", uniqueIdent, fixed = TRUE) == FALSE ~ 0, TRUE ~ 1)) %>%
+  dplyr::mutate(MovementType = dplyr::case_when(grepl("_HD-CRW_", uniqueIdent) == FALSE ~ MovementType, TRUE ~ 2)) %>%
+  dplyr::mutate(MovementType = dplyr::case_when(grepl("_DD_", uniqueIdent) == FALSE ~ MovementType, TRUE ~ 3)) %>%
+  dplyr::mutate(MovementType = dplyr::case_when(grepl("_OFF_", uniqueIdent) == FALSE ~ MovementType, TRUE ~ 4)) %>%
+  dplyr::mutate(SampleSetup =  dplyr::case_when(grepl("_full_", uniqueIdent) == FALSE ~ 0, TRUE ~ 5)) %>%
+  dplyr::mutate(SampleSetup =  dplyr::case_when(grepl("_real_", uniqueIdent) == FALSE ~ SampleSetup, TRUE ~ 6)) %>%
+  dplyr::mutate(Movement = dplyr::case_when(
+    grepl("_HD_", uniqueIdent , fixed = TRUE) == FALSE ~ "test",
+    TRUE ~ "Habitat driven"
+  )) %>%
+  dplyr::mutate(Movement = dplyr::case_when(
+    grepl("_DD_", uniqueIdent) == FALSE ~ Movement,
+    TRUE ~ "Competition driven"
+  )) %>%
+  dplyr::mutate(Movement = dplyr::case_when(
+    grepl("_HD-CRW_", uniqueIdent) == FALSE ~ Movement,
+    TRUE ~ "Habitat driven CRW"
+  )) %>%
+  dplyr::mutate(Movement = dplyr::case_when(grepl("_OFF_", uniqueIdent) == FALSE ~ Movement, TRUE ~ "Implicit")) %>%
+  dplyr::ungroup() %>%
+  dplyr::add_row(
+    uniqueIdent = "realData",
+    quarter = 15,
+    S = 0.721,
+    I = 0.009,
+    R = 0.270,
+    MovementType = 3,
+    SampleSetup = 9,
+    Movement = "Competition driven"
+  ) %>%
+  dplyr::mutate(label_1 = paste0("S:",
+    format(round(S, digits = 3), nsmall = 3),
+    "\n","I:",
+    format(round(I, digits = 3), nsmall = 3),
+    "\n","R:",
+    format(round(R, digits = 3), nsmall = 3)
+  ))
+
+
+expSirtab <- sirTab %>% mutate(S = round(S, 3), I = round(I, 3),R = round(R, 3)) %>% select(-uniqueIdent)
+write.table(expSirtab, "./sirTab2.csv", sep = ";", row.names = FALSE)
+```
