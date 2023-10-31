@@ -110,7 +110,7 @@ saveRDS(tst2_combine, paste0("./speedOfSpreadCombination.rds"))
 
 ```
 
-</details>
+</details><br>
 
 
     3. Outputs
