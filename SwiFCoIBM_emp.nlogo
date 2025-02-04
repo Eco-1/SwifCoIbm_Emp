@@ -52,6 +52,8 @@ globals
   rep                         ;   [#]            -              number of repetitions in case of running BehaviourSpace experiments
   ;seed                       ;   [#]            -              seed used if seed_setup = "ON"
   DONE                        ;   [boolean]      0              1 if stop conditions are TRUE
+
+  ;; OUTPUT
   runtime                     ;   [min]          0              counting minutes since starting setup
   dist_inf                    ;   [cells]        0              maximum spatial distance of disease transmission
   inf_x                       ;   [#]            -              coordinate x of the pathogen-introduced cell
@@ -101,9 +103,9 @@ globals
   patches_7                   ;   [#]            0              number of patches with quality_int = 7
   patches_8                   ;   [#]            0              number of patches with quality_int = 8
   patches_9                   ;   [#]            0              number of patches with quality_int = 9
-  areaCodeList                ;input lists
-  rDataAreaCodeList           ;input lists
-  infAdult                    ;output counter variable
+  areaCodeList
+  rDataAreaCodeList
+    infAdult                    ;output counter variable
   infSubAdult                 ;output counter variable
   infPiglett                  ;output counter variable
   immAdult                    ;output counter variable
@@ -123,14 +125,15 @@ globals
   dbr_AdultImmune             ;output counter variable
   dbr_SubAdultImmune          ;output counter variable
   dbr_pigletImmune            ;output counter variable
-  ct_Sus                      ;output counter variable
+    ct_Sus                      ;output counter variable
   ct_Imm                      ;output counter variable
   ct_Let                      ;output counter variable
-  runID                       ;helper variables
-  Vaccinated                  ;helper variables
-  infectedArea                ;helper variables
-  aclist                      ;helper variables
-  areaCodesWithInfection      ;helper variables
+  runID
+  Vaccinated
+  infectedArea
+  aclist
+  areaCodesWithInfection
+
 ]
 
 turtles-own
@@ -158,8 +161,8 @@ turtles-own
   visited                     ;   [#]            -              number of unique visited cells
   tag                         ;   [agent]        -              randomly chosen adult males plotting their movement paths
   tcolor                      ;   [#]            -              time-based color to plot movement paths
-  aboutToDie                  ; individual will die at the end of the tick
-  dbr                         ; cause of death tester (random mortality)
+  aboutToDie                  ;individual will die at the end of the tick
+  dbr                         ;cause of death tester (random mortality)
 ]
 
 patches-own
@@ -187,40 +190,40 @@ patches-own
   scent                       ;   [#]            -              accumulated visit time of infected adult males
   id                          ;   [#]            0              cluster id of cells
   RealDataAreaCode            ;output counter variable (patch)
-  sampleTimeList              ;input lists
-  nSampleList                 ;input lists
-  deathByAge                  ;output counters
-  deathByDisease              ;output counters
-  deathByDiseaseAdult         ;output counters
-  deathByDiseaseSubAdult      ;output counters
-  deathByDiseasePiglet        ;output counters
-  deathByRandom               ;output counters
-  deathByRandomAdult          ;output counters
-  deathByRandomSubAdult       ;output counters
-  deathByRandomPiglet         ;output counters
-  deathByAge_C                ;output counters
-  deathByDisease_C            ;output counters
-  deathByDiseaseAdult_C       ;output counters
-  deathByDiseaseSubAdult_C    ;output counters
-  deathByDiseasePiglet_C      ;output counters
-  deathByRandom_C             ;output counters
-  deathByRandomAdult_C        ;output counters
-  deathByRandomSubAdult_C     ;output counters
-  deathByRandomPiglet_C       ;output counters
-  deadImmuneHere              ;output counters
-  deadImmuneAdult             ;output counters
-  deadImmuneSubAdult          ;output counters
-  deadImmunePiglet            ;output counters
-  deadImmuneHere_C            ;output counters
-  deadImmuneAdult_C           ;output counters
-  deadImmuneSubAdult_C        ;output counters
-  deadImmunePiglet_C          ;output counters
-  deadHere                    ;output counters
-  currentInfectedHere         ;output counters
+  sampleTimeList
+  nSampleList
+deathByAge
+deathByDisease
+deathByDiseaseAdult
+deathByDiseaseSubAdult
+deathByDiseasePiglet
+deathByRandom
+deathByRandomAdult
+deathByRandomSubAdult
+deathByRandomPiglet
+deathByAge_C
+deathByDisease_C
+deathByDiseaseAdult_C
+deathByDiseaseSubAdult_C
+deathByDiseasePiglet_C
+deathByRandom_C
+deathByRandomAdult_C
+deathByRandomSubAdult_C
+deathByRandomPiglet_C
+deadImmuneHere
+deadImmuneAdult
+deadImmuneSubAdult
+deadImmunePiglet
+deadImmuneHere_C
+deadImmuneAdult_C
+deadImmuneSubAdult_C
+deadImmunePiglet_C
+deadHere
+currentInfectedHere
   areaCode                    ;municipality code
-  vacc1                       ;vaccination regime
-  vacc2                       ;vaccination regime
-  vacc3                       ;vaccination regime
+  vacc1
+  vacc2
+  vacc3
 ]
 
 extensions [
@@ -333,7 +336,7 @@ countOutput
 liveCount
   if ticks mod 13 = 0     [
     ;writeLandscape
-    areaCalc
+    ;areaCalc
   ]
 
                                 tick
@@ -735,6 +738,11 @@ to Init_Landscape
   set patches_7 count habitat with [quality_int = 7]
   set patches_8 count habitat with [quality_int = 8]
   set patches_9 count habitat with [quality_int = 9]
+
+  if homogenous_landscape = TRUE
+  [
+    ask patches with [quality > 0] [set quality mean [quality] of patches with [quality > 0]]
+  ]
 
 end
 
@@ -2734,18 +2742,18 @@ to execVaccinate
 
 end
 
-to areaCalc
-set aclist []
+;to areaCalc
+;set aclist []
 
-let pOfInterest patches with [RealDataAreaCode != -1]
+;let pOfInterest patches with [RealDataAreaCode != -1]
 
 ;let infP count pOfInterest with [deathByDisease_C > 0]
 
-set aclist [areaCode] of pOfInterest with [deathByDisease_C > 0]
+;set aclist [areaCode] of pOfInterest with [deathByDisease_C > 0]
 
-set aclist remove-duplicates aclist
+;set aclist remove-duplicates aclist
 
-set areaCodesWithInfection (word aclist)
+;set areaCodesWithInfection (word aclist)
 
 
 
@@ -2755,6 +2763,40 @@ set areaCodesWithInfection (word aclist)
 
  ;set infectedArea (infP * 4)
  ;print map [ x -> map first  ] aclist
+
+;end
+
+to areaCalc
+  set aclist []
+
+  let pOfInterest patches with [RealDataAreaCode != -1]
+
+  ; Find all area codes where deathByDisease_C > 0
+  set aclist [RealDataAreaCode] of pOfInterest with [deathByDisease_C > 0]
+
+  ; Remove duplicates from the list
+  set aclist remove-duplicates aclist
+
+  ; Convert aclist to a string for saving
+  set areaCodesWithInfection (word aclist)
+
+  ; Create a filename with the current tick and a unique identifier (like a random number)
+  let filename (word "/mapCSV/" "aclist_tick_" ticks "_"roaming "_" "_id_" (random 100000) ".csv")
+
+  ; Open the file for writing
+  file-open filename
+
+  ; Write the area code list as CSV
+  foreach aclist [ areaCode2 ->
+    file-write areaCode2
+    file-print ","  ; Add a comma after each value
+  ]
+
+  ; Close the file after writing
+  file-close
+
+  ; Optional: Print the filename for confirmation
+  show (word "Data saved to: " filename)
 
 end
 
@@ -3781,6 +3823,17 @@ realistic_vaccination
 1
 -1000
 
+SWITCH
+1277
+570
+1467
+603
+homogenous_landscape
+homogenous_landscape
+1
+1
+-1000
+
 @#$#@#$#@
 ## WHAT IS IT?
 
@@ -4123,7 +4176,7 @@ false
 Polygon -7500403 true true 270 75 225 30 30 225 75 270
 Polygon -7500403 true true 30 75 75 30 270 225 225 270
 @#$#@#$#@
-NetLogo 6.3.0
+NetLogo 6.4.0
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
