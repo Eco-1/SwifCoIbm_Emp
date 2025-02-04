@@ -13,7 +13,7 @@ Extract **AreaCodeSamplerFiles**.zip into a folder of the same name in the root 
 
     2. Install NetLogo:
 
-The model is designed in and needs to be run in [NetLogo 6.3.0](https://ccl.northwestern.edu/netlogo/) (functionality in different versions can not be guaranteed)
+The model is designed in and needs to be run in [NetLogo 6.3.0 or higher](https://ccl.northwestern.edu/netlogo/) (functionality in different versions can not be guaranteed)
 
     3. Running the model:
 
